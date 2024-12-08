@@ -89,7 +89,7 @@ Note: currently, only one version of the app is deployed, which is sufficient bu
 
 ## Database Design (Postgres)
 
-_By Jack Hillier_
+_By Youssef Raqqabi_
 
 ![Database Schema](./assets/database_schema.png)
 
