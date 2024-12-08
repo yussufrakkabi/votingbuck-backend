@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by the Prisma Client.
+model committee {
+  id   String?
+  name String?
+
+  @@ignore
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by the Prisma Client.
+model committee_membership {
+  rec_id  String?
+  comm_id String?
+  rank    String?
+
+  @@ignore
+}
+
+model donation {
+  id           String        @id
+  org_id       String?
+  rec_id       String
+  date         DateTime      @db.Date
+  amount       Decimal       @db.Decimal
+  occupation   String?
+  city         String
+  state        String
+  organization organization? @relation(fields: [org_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recipient    recipient     @relation(fields: [rec_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([date], map: "idx_date")
+  @@index([org_id], map: "idx_ord_id")
+  @@index([rec_id], map: "idx_rec_id")
+}
+
+model leadership_role {
+  rec_id     String
+  title      String
+  start_date DateTime? @db.Date
+  end_date   DateTime? @db.Date
+  recipient  recipient @relation(fields: [rec_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([rec_id, title])
+}
+
+model office {
+  rec_id     String
+  title      String
+  start_date DateTime? @db.Date
+  end_date   DateTime? @db.Date
+  recipient  recipient @relation(fields: [rec_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([rec_id, title])
+}
+
+model organization {
+  id                  String              @id
+  name                String?
+  description         String?
+  industry            String?
+  location            String?
+  uni_acronym         String?
+  uni_rank            Decimal?            @db.Decimal
+  uni_enrollment      String?
+  uni_founded         String?
+  uni_public          Boolean?
+  corp_revolvers      Decimal?            @db.Decimal
+  corp_lobby          Decimal?            @db.Decimal
+  reg_dem             Decimal?            @db.Decimal
+  reg_rep             Decimal?            @db.Decimal
+  reg_ind             Decimal?            @db.Decimal
+  uni_enrollment_low  Decimal?            @db.Decimal
+  uni_enrollment_high Decimal?            @db.Decimal
+  website             String?
+  donation            donation[]
+  recipient           recipient[]
+  registered_voters   registered_voters[]
+
+  @@index([industry], map: "idx_industry")
+}
+
+model recipient {
+  id                       String            @id
+  name                     String?
+  description              String?
+  ideology                 Decimal?          @db.Decimal
+  party                    String?
+  dob                      DateTime?         @db.Date
+  school                   String?
+  office                   String?
+  role                     String?
+  state                    String?
+  wealth                   Decimal?          @db.Decimal
+  recent_wealth            Decimal?          @db.Decimal
+  wealth_incrase           Decimal?          @db.Decimal
+  house_exit_reason        String?
+  senate_exit_reason       String?
+  organization             organization?     @relation(fields: [school], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  donation                 donation[]
+  leadership_role          leadership_role[]
+  office_officeTorecipient office[]
+}
+
+model registered_voters {
+  org_id       String
+  year         Decimal      @db.Decimal
+  dem_count    Decimal?     @db.Decimal
+  rep_count    Decimal?     @db.Decimal
+  organization organization @relation(fields: [org_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([org_id, year])
+}

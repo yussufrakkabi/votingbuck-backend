@@ -1,0 +1,133 @@
+name: CI/CD Docker Deployment on EC2
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  Build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: votingbuck-backend_server
+          IMAGE_TAG: latest
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+  Test:
+    needs: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Redis
+        run: |
+          docker network create 4470-backend_backend
+          docker-compose create redis 
+          docker-compose start redis
+
+      - name: Create Redis index
+        run: docker exec redis redis-cli FT.CREATE index ON HASH PREFIX 1 entity SCORE 0.000001 SCORE_FIELD score STOPWORDS 0 SCHEMA name TEXT NOSTEM SORTABLE category TAG  id NUMERIC
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: DATABASE_URL="${{ secrets.DATABASE_URL }}" REDIS_HOST="127.0.0.1" REDIS_PORT="${{ secrets.REDIS_PORT }}" REDIS_INDEX_NAME="${{ secrets.REDIS_INDEX_NAME }}" npm test
+
+  Deploy:
+    needs: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Copy files for Docker volues (via SCP)
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.AWS_EC2_PUBLIC_DNS }}
+          username: ${{ secrets.AWS_EC2_USERNAME }}
+          key: ${{ secrets.AWS_EC2_PEM }}
+          port: 22
+          source: 'docker-compose.yml,nginx.conf'
+          target: './api/'
+
+      - name: Create .env file in EC2
+        uses: appleboy/ssh-action@master
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_HOST: ${{ secrets.REDIS_HOST }}
+          REDIS_PORT: ${{ secrets.REDIS_PORT }}
+          REDIS_INDEX_NAME: ${{ secrets.REDIS_INDEX_NAME }}
+
+        with:
+          host: ${{ secrets.AWS_EC2_PUBLIC_DNS }}
+          username: ${{ secrets.AWS_EC2_USERNAME }}
+          key: ${{ secrets.AWS_EC2_PEM }}
+          envs: DATABASE_URL,REDIS_HOST,REDIS_PORT,REDIS_INDEX_NAME
+          script: |
+            ls -a
+            cd api
+            echo "DATABASE_URL=$DATABASE_URL" > .env
+            echo "REDIS_HOST=$REDIS_HOST" >> .env
+            echo "REDIS_PORT=$REDIS_PORT" >> .env
+            echo "REDIS_INDEX_NAME=$REDIS_INDEX_NAME" >> .env
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Executing SSH Commands on EC2
+        uses: appleboy/ssh-action@master
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: votingbuck-backend_server
+          IMAGE_TAG: latest
+        with:
+          host: ${{ secrets.AWS_EC2_PUBLIC_DNS }}
+          username: ${{ secrets.AWS_EC2_USERNAME }}
+          key: ${{ secrets.AWS_EC2_PEM }}
+          envs: ECR_REGISTRY,ECR_REPOSITORY,IMAGE_TAG
+          script: |
+            ls -a
+            cd api
+            aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin $ECR_REGISTRY
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG votingbuck-backend_server
+            docker rmi $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+            docker rmi $(docker images -f "dangling=true" -q)
+            docker-compose up -d
